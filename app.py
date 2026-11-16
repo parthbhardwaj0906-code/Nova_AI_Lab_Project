@@ -122,19 +122,6 @@ with st.sidebar:
                         delete_reminder(rem["id"])
                         st.rerun()
 
-    st.markdown("---")
-    st.markdown("### 🧪 Quick Test Prompts")
-    st.caption("Click any prompt below to test Nova's tools & memory:")
-
-    if st.button("🌤️ What's the weather in Rajkot?", use_container_width=True):
-        st.session_state.pending_prompt = "What's the weather in Rajkot?"
-    if st.button("📝 Note: submit lab report Friday", use_container_width=True):
-        st.session_state.pending_prompt = "Note: submit lab report Friday"
-    if st.button("🔢 What is 15% of 2400?", use_container_width=True):
-        st.session_state.pending_prompt = "What is 15% of 2400?"
-    if st.button("🧠 My name is Parth and I study CS", use_container_width=True):
-        st.session_state.pending_prompt = "My name is Parth and I study CS. Please remember that."
-
 # 4. Configuration Check
 is_valid_config, config_error_msg = validate_config()
 if not is_valid_config:
@@ -149,12 +136,8 @@ for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# 7. Determine Active User Input (Typed Text or Clicked Quick Prompt)
+# 7. User Input
 user_prompt = st.chat_input("Ask Nova something...")
-
-if "pending_prompt" in st.session_state and st.session_state.pending_prompt:
-    user_prompt = st.session_state.pending_prompt
-    st.session_state.pending_prompt = None
 
 # 8. Unified Chat & Execution Flow
 if user_prompt:
