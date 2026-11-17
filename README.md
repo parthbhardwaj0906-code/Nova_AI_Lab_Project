@@ -73,3 +73,5 @@ streamlit run app.py
 ```
 
 ---
+
+Or the live deployed link can be used to access the streamlit based app: https://novaailabproject-c3acsmdcbkylzxs4ehckoh.streamlit.app/
