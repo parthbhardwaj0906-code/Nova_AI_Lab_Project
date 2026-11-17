@@ -73,12 +73,3 @@ streamlit run app.py
 ```
 
 ---
-
-## 🎓 Viva Defense FAQ
-
-- **Q: How does Document Q&A work without a heavy vector database?**
-  *A:* Nova uses `pypdf` to parse text and page numbers from uploaded documents in pure Python. The extracted text is tagged with page markers and passed directly into the LLM's context window. Modern foundation models (e.g. Llama 3.3 on Groq) support large 128k context windows, enabling instant, accurate document Q&A without indexing overhead or embeddings latency.
-- **Q: Why use Python's AST parser for the calculator instead of `eval()`?**
-  *A:* Standard `eval()` is vulnerable to Remote Code Execution (RCE) attacks (e.g., `__import__('os').system('rm -rf /')`). Nova parses expressions into an Abstract Syntax Tree (AST) and only evaluates explicitly whitelisted mathematical nodes.
-- **Q: How does the ReAct tool calling work?**
-  *A:* Nova passes JSON schemas of all tools to the OpenAI-compatible API. When the model determines an external tool is required, it returns a function call object. Nova executes the Python tool, appends the observation to the conversation, and allows the model to summarize the final response.
