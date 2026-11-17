@@ -29,7 +29,7 @@ def get_connection() -> sqlite3.Connection:
 def init_db() -> None:
     """
     Initializes the database schema by creating required health and chat tables.
-    Runs safe schema migrations for existing tables.
+    Runs safe schema migrations for existing tables and columns.
     """
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -102,12 +102,51 @@ def init_db() -> None:
             """
         )
 
-        # Safe column migrations if database already existed
+        # Migration: Ensure user_id column exists in existing tables
         for table in ["messages", "health_metrics", "symptoms", "medication_reminders"]:
             try:
-                cursor.execute(f"ALTER TABLE {table} ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default_user'")
-            except sqlite3.OperationalError:
-                pass  # Column already exists
+                cols = [r[1] for r in cursor.execute(f"PRAGMA table_info({table})").fetchall()]
+                if cols and "user_id" not in cols:
+                    cursor.execute(f"ALTER TABLE {table} ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default_user'")
+            except Exception:
+                pass
+
+        # Migration for user_preferences: Ensure user_id column and composite PK exist
+        try:
+            pref_cols = [r[1] for r in cursor.execute("PRAGMA table_info(user_preferences)").fetchall()]
+            if pref_cols and "user_id" not in pref_cols:
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS user_preferences_new (
+                        user_id TEXT NOT NULL DEFAULT 'default_user',
+                        key TEXT NOT NULL,
+                        value TEXT NOT NULL,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY (user_id, key)
+                    )
+                    """
+                )
+                if "updated_at" in pref_cols:
+                    cursor.execute(
+                        """
+                        INSERT OR IGNORE INTO user_preferences_new (user_id, key, value, updated_at)
+                        SELECT 'default_user', key, value, updated_at FROM user_preferences
+                        """
+                    )
+                else:
+                    cursor.execute(
+                        """
+                        INSERT OR IGNORE INTO user_preferences_new (user_id, key, value)
+                        SELECT 'default_user', key, value FROM user_preferences
+                        """
+                    )
+                cursor.execute("DROP TABLE user_preferences")
+                cursor.execute("ALTER TABLE user_preferences_new RENAME TO user_preferences")
+        except Exception:
+            try:
+                cursor.execute("ALTER TABLE user_preferences ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default_user'")
+            except Exception:
+                pass
 
         conn.commit()
 
@@ -317,5 +356,5 @@ def delete_preference(user_id: str, key: str) -> None:
         conn.commit()
 
 
-# Automatically initialize schema on module load
+# Automatically initialize and migrate schema on module load
 init_db()
