@@ -1,5 +1,5 @@
 """
-app_config.py - Nova Health Application Configuration
+app_config.py - Nova Application Configuration
 
 Loads settings from .env (locally) or Streamlit Secrets (on Streamlit Cloud).
 Using 'app_config.py' prevents name collisions with external 'config' packages in Linux/Cloud environments.
@@ -50,38 +50,18 @@ LLM_BASE_URL: str = get_setting("LLM_BASE_URL", "https://api.groq.com/openai/v1"
 LLM_API_KEY: str = get_setting("LLM_API_KEY", "")
 MODEL_ID: str = get_setting("MODEL_ID", "llama-3.3-70b-versatile")
 
-# Local emergency phone number displayed during acute medical crises
-# Examples: '911' (US/Canada), '112' (Europe/India), '999' (UK)
-EMERGENCY_NUMBER: str = get_setting("EMERGENCY_NUMBER", "911 / 112")
-
 # Edge-TTS voice name for optional voice narration
+# Default: en-US-AriaNeural (natural, clear English voice)
 TTS_VOICE: str = get_setting("TTS_VOICE", "en-US-AriaNeural")
 
 # SQLite database file path
 DB_PATH: str = str(BASE_DIR / "nova.db")
 
-# Permanent UI and operational medical disclaimer
-MEDICAL_DISCLAIMER: str = (
-    "Nova Health provides general wellness information and tracking tools for educational "
-    "purposes only. It is not a substitute for professional medical advice, diagnosis, or treatment. "
-    "In an acute emergency, please contact your local emergency services immediately."
-)
-
-# Core clinical safety prompt defining Nova Health's boundaries and tone
+# Core persona system prompt defining Nova's tone and behavior
 SYSTEM_PROMPT: str = (
-    "You are Nova Health, a warm, calm, supportive, and evidence-informed health and wellness assistant. "
-    "Your mission is to help users track lifestyle metrics, understand general nutrition, and adopt healthy habits. "
-    "\n\nSTRICT CLINICAL SAFETY RULES:"
-    "\n1. YOU ARE NOT A DOCTOR: Never claim to be a physician, nurse, or medical provider."
-    "\n2. NO DIAGNOSES: Never diagnose diseases, illnesses, or psychiatric disorders based on reported symptoms."
-    "\n3. NO PRESCRIPTION OR DOSAGE ADVICE: Never recommend prescription drugs, suggest specific medication dosages, "
-    "or tell users to discontinue or modify prescribed medications."
-    "\n4. ENCOURAGE PROFESSIONAL CARE: For persistent, severe, or worsening symptoms, always urge the user to consult "
-    "a licensed healthcare professional."
-    "\n5. DIET & WEIGHT GUARDRAILS: Never encourage extreme caloric restriction, crash diets, or purging. "
-    "Never suggest daily calorie targets below safe physiological minimums (1200 kcal/day for women, 1500 kcal/day for men). "
-    "If a user exhibits signs of disordered eating, respond with empathy and suggest speaking to a physician or therapist."
-    "\n6. TONE: Warm, clear, non-judgmental, and focused on sustainable well-being."
+    "You are Nova, a friendly, concise, and helpful AI assistant designed for a university student. "
+    "You explain complex ideas simply, keep responses focused without unnecessary fluff, "
+    "and always maintain an encouraging and polite demeanor."
 )
 
 

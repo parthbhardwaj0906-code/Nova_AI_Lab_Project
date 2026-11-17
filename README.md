@@ -1,39 +1,48 @@
-# Nova Health: AI Health & Wellness Assistant
+# Nova: AI Virtual Assistant
 
-Nova Health is a lightweight, safety-first health and wellness virtual assistant built with Python 3.11, Streamlit, and SQLite. Designed for university demonstrations and viva defense, Nova Health features pre-LLM deterministic emergency screening, evidence-informed wellness calculations, user-partitioned biometric logging, Open Food Facts nutrition lookup, and optional voice narration.
-
----
-
-## 🛡️ Clinical Safety Architecture (Top Priority)
-
-In clinical AI systems, safety-critical decisions must **never** rely exclusively on non-deterministic LLM generation. Nova Health implements defense-in-depth safety:
-
-1. **Pre-LLM Deterministic Emergency Screener (`safety.py`)**:
-   - Executes regex and keyword matching on incoming messages **before** calling the LLM.
-   - **Acute Emergencies**: Intercepts chest pain, respiratory distress, stroke signs (FAST: face drooping, slurred speech), severe bleeding, and drug overdoses. Instantly outputs a standardized non-LLM alert directing the user to contact local emergency services immediately using `EMERGENCY_NUMBER` (e.g. 911 / 112).
-   - **Crisis & Self-Harm**: Detects suicidal ideation or self-injury and immediately provides compassionate support with direct links to the **988 Suicide & Crisis Lifeline** and crisis text lines.
-   - **Disordered Eating Guardrail**: Screens for purging, starvation, or fear of eating, advising professional support rather than diet numbers.
-2. **Strict Clinical Boundaries**:
-   - **No Diagnoses**: Never claims a user has a specific medical condition.
-   - **No Prescription Advice**: Never recommends prescription pharmaceuticals, calculates dosages, or advises altering medications.
-   - **Mandatory Escalation**: Urges consulting licensed medical professionals for severe, persistent, or worsening symptoms.
-3. **Calorie Deficit Safety Floors**:
-   - The calorie estimation tool enforces physiological minimums (**1200 kcal/day for women**, **1500 kcal/day for men**) to protect against metabolic damage and malnutrition.
-4. **Permanent Disclaimers & Privacy**:
-   - Permanent UI medical disclaimer header.
-   - User profile partitioning (`user_id`) to prevent health data contamination across visitors.
+Nova is a lightweight, explainable AI virtual assistant built for university lab assignments and viva defense.
+It runs as a single Streamlit web application and connects to any OpenAI-compatible LLM provider (Groq, Ollama, OpenRouter, OpenAI), allowing models to be swapped by changing a single setting.
 
 ---
 
-## 🛠️ Health Tool Suite (`health_tools.py`)
+## 🌟 Key Features
 
-- **`calculate_bmi(weight_kg, height_cm)`**: Calculates Body Mass Index and WHO classification, noting clinical limitations of BMI as a screening tool.
-- **`estimate_daily_calories(age, sex, weight_kg, height_cm, activity_level, goal)`**: Implements the validated **Mifflin-St Jeor equation**, strictly enforcing the 1200 / 1500 kcal daily floor.
-- **`log_health_metric(metric, value, unit)`**: Validates physiological ranges and logs weight, sleep hours, water intake, blood sugar, and mood.
-- **`get_health_history(metric, days)`**: Analyzes recent logs and determines trend direction (upward, downward, stable).
-- **`add_medication_reminder(name, time, notes)`**: Schedules user-defined reminders without calculating or suggesting dosages.
-- **`log_symptom(symptom, severity_1_to_10, notes)` & `get_symptom_history()`**: Formats a clean clinical timeline designed for users to take to doctor visits.
-- **`lookup_nutrition(food)`**: Queries the free [Open Food Facts](https://world.openfoodfacts.org/) search API for calories, protein, carbohydrates, and fat per 100g.
+1. **Streaming Chat with SQLite Persistence**:
+   - Natural, real-time token streaming directly to the chat interface.
+   - Preserves conversation history across app restarts using local SQLite storage.
+2. **📄 PDF Document Upload & Q&A**:
+   - Upload any lecture notes, research papers, syllabus, or manuals via the sidebar.
+   - Extracts document text using `pypdf` with page markers (`--- Page X ---`).
+   - Chat with Nova about your uploaded document: request summaries, ask specific questions, or extract concepts with page references.
+3. **🛠️ Autonomous Agentic Tool Calling (ReAct Loop)**:
+   - **`get_weather(city)`**: Real-time weather and temperature using the free Open-Meteo REST API (no key required).
+   - **`calculator(expression)`**: Safe mathematical expression evaluation using Python's AST parser (rejects dangerous functions, no `eval()`).
+   - **`add_note(title, content)` & `list_notes()`**: Save and retrieve personal study memos directly from SQLite.
+   - **`add_reminder(task, due_time)`**: Track task deadlines and schedules.
+   - **`remember_preference(key, value)`**: Remembers your name, interests, and preferred communication style between sessions.
+4. **🔊 Spoken Replies (Voice Narration)**:
+   - Optional voice narration using Microsoft Edge's free neural Text-to-Speech (`edge-tts`).
+   - Cleans formatting (removes markdown symbols, tables, and code blocks) before synthesis.
+   - Autoplays smoothly in the background via a hidden HTML5 audio element.
+5. **Interactive Sidebar Storage Dashboard**:
+   - View, manage, and delete saved user memories, personal notes, and reminders with one-click buttons.
+   - Active document badge with page count and a one-click "Remove PDF" button.
+
+---
+
+## 🏗️ Project Architecture
+
+```
+├── app.py              # Streamlit user interface, PDF file handler, and chat loop
+├── app_config.py       # Configuration loader (.env and Streamlit Secrets)
+├── config.py           # Backward-compatible alias for app_config.py
+├── database.py         # SQLite connection and CRUD operations (messages, notes, reminders, preferences)
+├── llm.py              # OpenAI-compatible ReAct agentic loop with tool calling and PDF context
+├── tools.py            # Tool implementations (weather, AST calculator, notes, reminders, preferences)
+├── voice.py            # Edge-TTS speech generation, markdown cleaner, and audio handler
+├── requirements.txt    # Python dependencies
+└── README.md           # Documentation and Viva Defense Guide
+```
 
 ---
 
@@ -45,46 +54,31 @@ pip install -r requirements.txt
 ```
 
 ### 2. Configure Environment (`.env`)
-Copy `.env.example` to `.env` and set your preferred provider credentials:
-```bash
-cp .env.example .env
-```
-Example configuration for **Groq** (Fast & Free):
+Create a `.env` file in the project root:
 ```env
+# LLM Provider Configuration (Defaults to Groq's fast Llama 3.3 70B)
 LLM_BASE_URL=https://api.groq.com/openai/v1
-LLM_API_KEY=gsk_yourGroqKeyHere
+LLM_API_KEY=gsk_your_groq_api_key_here
 MODEL_ID=llama-3.3-70b-versatile
-EMERGENCY_NUMBER=911
+
+# Text-to-Speech Voice
 TTS_VOICE=en-US-AriaNeural
 ```
 
-### 3. Run Nova Health
+*(Note: On Streamlit Community Cloud, you can enter these exact keys in the **Secrets** settings without committing a `.env` file).*
+
+### 3. Run the Application
 ```bash
 streamlit run app.py
 ```
-Open your browser at `http://localhost:8501`.
 
 ---
 
-## 🔍 File Layout & Viva Breakdown
+## 🎓 Viva Defense FAQ
 
-- **`app.py`**: Streamlit presentation layer. Renders the medical disclaimer, user profile switcher, interactive sidebar dashboards (metric line charts, medication schedule, symptom timeline), and hidden audio player.
-- **`safety.py`**: Pre-LLM deterministic emergency and crisis firewall.
-- **`health_tools.py`**: Health calculations (BMI, Mifflin-St Jeor), range validation, Open Food Facts API client, and tool dispatching.
-- **`database.py`**: SQLite database managing `messages`, `health_metrics`, `symptoms`, `medication_reminders`, and `user_preferences` with `user_id` multi-tenant isolation.
-- **`llm.py`**: OpenAI-compatible client orchestrating the ReAct loop with health tool schemas and clinical safety prompt boundaries.
-- **`voice.py`**: Text cleaner and Edge-TTS voice synthesis engine.
-- **`config.py`**: Environment variables, emergency contact numbers, and core persona definition.
-
----
-
-## ⚠️ Limitations & Future Work
-
-### Limitations
-1. **Local SQLite Storage**: Suitable for personal and lab demonstrations; production healthcare systems require HIPAA/GDPR-compliant encrypted cloud databases.
-2. **Single-Agent Architecture**: Uses an iterative ReAct loop; complex multi-symptom triage could benefit from a multi-agent specialist panel.
-
-### Future Work
-1. **Wearable Device Integration**: Sync with Apple HealthKit or Google Health Connect for automatic heart rate and step logging.
-2. **Document RAG (Medical Knowledge Base)**: Ingest medical reference guides into ChromaDB with BM25 + Reciprocal Rank Fusion (RRF) for evidence-backed lifestyle articles.
-3. **Voice Input (Whisper STT)**: Hands-free voice input for accessibility.
+- **Q: How does Document Q&A work without a heavy vector database?**
+  *A:* Nova uses `pypdf` to parse text and page numbers from uploaded documents in pure Python. The extracted text is tagged with page markers and passed directly into the LLM's context window. Modern foundation models (e.g. Llama 3.3 on Groq) support large 128k context windows, enabling instant, accurate document Q&A without indexing overhead or embeddings latency.
+- **Q: Why use Python's AST parser for the calculator instead of `eval()`?**
+  *A:* Standard `eval()` is vulnerable to Remote Code Execution (RCE) attacks (e.g., `__import__('os').system('rm -rf /')`). Nova parses expressions into an Abstract Syntax Tree (AST) and only evaluates explicitly whitelisted mathematical nodes.
+- **Q: How does the ReAct tool calling work?**
+  *A:* Nova passes JSON schemas of all tools to the OpenAI-compatible API. When the model determines an external tool is required, it returns a function call object. Nova executes the Python tool, appends the observation to the conversation, and allows the model to summarize the final response.
