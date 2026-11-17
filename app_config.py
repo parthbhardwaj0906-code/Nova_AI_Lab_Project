@@ -1,4 +1,4 @@
-"""
+﻿"""
 app_config.py - Nova Application Configuration
 
 Loads settings from .env (locally) or Streamlit Secrets (on Streamlit Cloud).
@@ -46,48 +46,9 @@ def get_setting(key: str, default: str = "") -> str:
 
 
 # Provider-agnostic LLM configuration (Groq, Ollama, OpenRouter, OpenAI, etc.)
-# Default is OpenRouter pointing to gpt-oss-120b — change to any OpenAI-compatible provider
 LLM_BASE_URL: str = get_setting("LLM_BASE_URL", "https://openrouter.ai/api/v1")
 LLM_API_KEY: str = get_setting("LLM_API_KEY", "")
 MODEL_ID: str = get_setting("MODEL_ID", "openai/gpt-oss-120b")
-
-# Models that support image/vision inputs via the OpenAI multimodal message format.
-# If the active model is NOT in this list, the UI will warn the user before sending images.
-VISION_MODELS: set = {
-    "gpt-4o",
-    "gpt-4o-mini",
-    "gpt-4-turbo",
-    "gpt-4-vision-preview",
-    "claude-3-5-sonnet-20241022",
-    "claude-3-5-haiku-20241022",
-    "claude-3-opus-20240229",
-    "anthropic/claude-3.5-sonnet",
-    "anthropic/claude-3-opus",
-    "anthropic/claude-3.5-haiku",
-    "openai/gpt-4o",
-    "openai/gpt-4o-mini",
-    "openai/gpt-4-turbo",
-    "google/gemini-pro-vision",
-    "google/gemini-flash-1.5",
-    "google/gemini-pro-1.5",
-    "meta-llama/llama-3.2-11b-vision-instruct",
-    "meta-llama/llama-3.2-90b-vision-instruct",
-    "llama-3.2-11b-vision-preview",
-    "llama-3.2-90b-vision-preview",
-    "llava",
-    "bakllava",
-    "moondream",
-}
-
-
-def is_vision_model(model_id: str) -> bool:
-    """
-    Returns True if the configured model supports image (vision) inputs.
-    Checks against a known list of vision-capable model IDs.
-    If your model is not listed but supports vision, add it to VISION_MODELS above.
-    """
-    model_lower = model_id.lower()
-    return any(vm.lower() in model_lower for vm in VISION_MODELS)
 
 # Edge-TTS voice name for optional voice narration
 # Default: en-US-AriaNeural (natural, clear English voice)

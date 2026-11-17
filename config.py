@@ -1,4 +1,4 @@
-"""
+﻿"""
 config.py - Alias for app_config.py
 
 Provides backward compatibility for modules importing config directly.
@@ -13,7 +13,5 @@ from app_config import (
     TTS_VOICE,
     DB_PATH,
     SYSTEM_PROMPT,
-    VISION_MODELS,
-    is_vision_model,
     validate_config,
 )

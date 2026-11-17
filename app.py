@@ -1,14 +1,13 @@
-"""
+﻿"""
 app.py - Streamlit User Interface for Nova Virtual Assistant
 
 Main entry point for Nova.
 Features:
 1. Natural language streaming chat with persistent SQLite history.
 2. PDF Document Upload & Q&A: Upload any PDF to ask questions, summarize, or extract details.
-3. Image Upload & Vision: Upload images (JPG, PNG, WEBP) for Nova to describe, analyse, or answer questions about.
-4. Autonomous ReAct Tool Calling: Weather, safe AST calculator, notes, reminders, user memory.
-5. Voice Narration: Spoken replies using Edge-TTS with invisible HTML5 autoplay.
-6. Interactive Sidebar: PDF/image manager, saved notes, task reminders, and long-term memory viewers.
+3. Autonomous ReAct Tool Calling: Weather, safe AST calculator, notes, reminders, user memory.
+4. Voice Narration: Spoken replies using Edge-TTS with invisible HTML5 autoplay.
+5. Interactive Sidebar: PDF manager, saved notes, task reminders, and long-term memory viewers.
 """
 
 import os
@@ -26,7 +25,7 @@ import pypdf
 import streamlit as st
 import streamlit.components.v1 as components
 
-from app_config import MODEL_ID, TTS_VOICE, validate_config, is_vision_model
+from app_config import MODEL_ID, TTS_VOICE, validate_config
 from database import (
     init_db,
     load_messages,
@@ -85,26 +84,6 @@ def extract_text_from_pdf(file_bytes: bytes) -> tuple[str, int]:
     return full_text, num_pages
 
 
-def encode_image_to_base64(file_bytes: bytes, mime_type: str) -> str:
-    """
-    Encodes raw image bytes into a Base64 data URI string.
-    This is the format required by vision-capable LLM APIs to send inline images.
-    Example output: 'data:image/jpeg;base64,/9j/4AAQSkZJRgAB...'
-    """
-    b64 = base64.b64encode(file_bytes).decode()
-    return f"data:{mime_type};base64,{b64}"
-
-
-# Map file extensions to their correct MIME types for the API
-MIME_TYPE_MAP = {
-    "jpg": "image/jpeg",
-    "jpeg": "image/jpeg",
-    "png": "image/png",
-    "gif": "image/gif",
-    "webp": "image/webp",
-}
-
-
 # 2. Database Initialization
 init_db()
 
@@ -127,19 +106,11 @@ with st.sidebar:
     if st.button("🗑️ Clear Chat History", use_container_width=True):
         clear_chat_history()
         st.session_state.messages = []
-        st.session_state.pop("pdf_text", None)
-        st.session_state.pop("pdf_name", None)
-        st.session_state.pop("pdf_pages", None)
-        st.session_state.pop("image_b64", None)
-        st.session_state.pop("image_name", None)
-        st.session_state.pop("image_mime", None)
         st.rerun()
 
     st.markdown("---")
 
-    # -------------------------------------------------------------------------
     # PDF Document Upload Section
-    # -------------------------------------------------------------------------
     st.subheader("📄 Document Q&A")
     uploaded_pdf = st.file_uploader(
         "Upload a PDF to ask questions:",
@@ -148,7 +119,7 @@ with st.sidebar:
     )
 
     if uploaded_pdf is not None:
-        # Only re-process if a new file was uploaded (avoids re-reading on every rerun)
+        # Check if this is a newly uploaded file
         if (
             "pdf_name" not in st.session_state
             or st.session_state.pdf_name != uploaded_pdf.name
@@ -168,60 +139,13 @@ with st.sidebar:
             except Exception as err:
                 st.error(f"Error reading PDF: {err}")
 
-    # Display active PDF info and a remove button
+    # Display active PDF details and a remove button
     if "pdf_text" in st.session_state and st.session_state.pdf_text:
         st.info(f"📎 **Active Doc:** {st.session_state.pdf_name} ({st.session_state.pdf_pages} pages)")
         if st.button("❌ Remove PDF", use_container_width=True):
             st.session_state.pop("pdf_text", None)
             st.session_state.pop("pdf_name", None)
             st.session_state.pop("pdf_pages", None)
-            st.rerun()
-
-    st.markdown("---")
-
-    # -------------------------------------------------------------------------
-    # Image Upload Section
-    # -------------------------------------------------------------------------
-    st.subheader("🖼️ Image Q&A")
-    uploaded_image = st.file_uploader(
-        "Upload an image to ask questions:",
-        type=["jpg", "jpeg", "png", "gif", "webp"],
-        help="Upload diagrams, charts, screenshots, or any photo for Nova to analyse.",
-    )
-
-    if uploaded_image is not None:
-        # Only re-encode if a new image was uploaded
-        if (
-            "image_name" not in st.session_state
-            or st.session_state.image_name != uploaded_image.name
-        ):
-            try:
-                img_bytes = uploaded_image.getvalue()
-                ext = uploaded_image.name.rsplit(".", 1)[-1].lower()
-                mime = MIME_TYPE_MAP.get(ext, "image/jpeg")
-                st.session_state.image_b64 = encode_image_to_base64(img_bytes, mime)
-                st.session_state.image_name = uploaded_image.name
-                st.session_state.image_mime = mime
-                st.success(f"Loaded image: {uploaded_image.name}")
-            except Exception as err:
-                st.error(f"Error loading image: {err}")
-
-    # Preview the active image and show a remove button
-    if "image_b64" in st.session_state and st.session_state.image_b64:
-        st.image(uploaded_image or st.session_state.image_b64, caption=st.session_state.image_name, use_container_width=True)
-
-        # Warn if the active model is text-only and cannot process images
-        if not is_vision_model(MODEL_ID):
-            st.warning(
-                f"⚠️ **`{MODEL_ID}` is text-only** and cannot analyse images. "
-                "Switch to a vision model (e.g. `openai/gpt-4o`, `google/gemini-flash-1.5`) "
-                "in your `.env` / Streamlit Secrets to use this feature.",
-            )
-
-        if st.button("❌ Remove Image", use_container_width=True):
-            st.session_state.pop("image_b64", None)
-            st.session_state.pop("image_name", None)
-            st.session_state.pop("image_mime", None)
             st.rerun()
 
     st.markdown("---")
@@ -282,14 +206,9 @@ if not is_valid_config:
 if "messages" not in st.session_state:
     st.session_state.messages = load_messages()
 
-# 6. Active Attachment Banners in Chat View
-active_banners = []
+# 6. Active Document Banner in Chat View
 if "pdf_text" in st.session_state and st.session_state.pdf_text:
-    active_banners.append(f"📎 **PDF:** `{st.session_state.pdf_name}` ({st.session_state.pdf_pages} pages)")
-if "image_b64" in st.session_state and st.session_state.image_b64:
-    active_banners.append(f"🖼️ **Image:** `{st.session_state.image_name}`")
-if active_banners:
-    st.caption("  ·  ".join(active_banners) + " — Ask anything about your attachments!")
+    st.caption(f"📎 **Attached Document:** `{st.session_state.pdf_name}` ({st.session_state.pdf_pages} pages) — Ask any question about this file!")
 
 # 7. Render Saved Chat History
 for msg in st.session_state.messages:
@@ -297,23 +216,19 @@ for msg in st.session_state.messages:
         st.markdown(msg["content"])
 
 # 8. User Input Field
-user_prompt = st.chat_input("Ask Nova something, about your PDF, or describe what you see in your image...")
+user_prompt = st.chat_input("Ask Nova something or ask about your uploaded PDF...")
 
 # 9. Unified Chat & Execution Flow
 if user_prompt:
     # Display the user's message immediately in the UI
     with st.chat_message("user"):
         st.markdown(user_prompt)
-        # Show a small thumbnail preview below the message if an image is active
-        if "image_b64" in st.session_state and st.session_state.image_b64:
-            st.caption(f"🖼️ Attached: `{st.session_state.image_name}`")
 
-    # Persist the plain text of the user message to SQLite and session state
-    # (Images are passed fresh each time via the vision API; we don't store base64 in SQLite)
+    # Persist user message to SQLite and session state
     save_message("user", user_prompt)
     st.session_state.messages.append({"role": "user", "content": user_prompt})
 
-    # Prepare PDF document context if one is currently uploaded (capped at ~60,000 chars for context safety)
+    # Prepare PDF document context if one is currently uploaded (capped at ~60,000 chars for safety)
     active_pdf_context = None
     active_pdf_name = None
     if "pdf_text" in st.session_state and st.session_state.pdf_text:
@@ -323,15 +238,6 @@ if user_prompt:
         else:
             active_pdf_context = raw_text
         active_pdf_name = st.session_state.pdf_name
-
-    # Prepare image context if an image is currently uploaded AND model supports vision
-    active_image_b64 = None
-    active_image_name = None
-    if "image_b64" in st.session_state and st.session_state.image_b64:
-        if is_vision_model(MODEL_ID):
-            active_image_b64 = st.session_state.get("image_b64")
-            active_image_name = st.session_state.get("image_name")
-        # (if model is text-only, the sidebar already shows a warning; we silently skip the image)
 
     # Generate assistant response with the agentic ReAct loop
     with st.chat_message("assistant"):
@@ -352,12 +258,10 @@ if user_prompt:
                     speak_enabled=speak_replies,
                     pdf_context=active_pdf_context,
                     pdf_name=active_pdf_name,
-                    image_b64=active_image_b64,
-                    image_name=active_image_name,
                 )
             )
 
-            # Keep the final tool usage status badge visible
+            # Keep the final tool usage status badge visible above or beside the answer
             if used_tools:
                 tools_str = ", ".join(f"`{t}`" for t in used_tools)
                 tool_status_placeholder.caption(f"🛠️ *Used tool:* {tools_str}")
