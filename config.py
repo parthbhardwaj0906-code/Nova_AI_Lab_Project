@@ -13,5 +13,7 @@ from app_config import (
     TTS_VOICE,
     DB_PATH,
     SYSTEM_PROMPT,
+    VISION_MODELS,
+    is_vision_model,
     validate_config,
 )

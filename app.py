@@ -26,7 +26,7 @@ import pypdf
 import streamlit as st
 import streamlit.components.v1 as components
 
-from app_config import MODEL_ID, TTS_VOICE, validate_config
+from app_config import MODEL_ID, TTS_VOICE, validate_config, is_vision_model
 from database import (
     init_db,
     load_messages,
@@ -209,6 +209,15 @@ with st.sidebar:
     # Preview the active image and show a remove button
     if "image_b64" in st.session_state and st.session_state.image_b64:
         st.image(uploaded_image or st.session_state.image_b64, caption=st.session_state.image_name, use_container_width=True)
+
+        # Warn if the active model is text-only and cannot process images
+        if not is_vision_model(MODEL_ID):
+            st.warning(
+                f"⚠️ **`{MODEL_ID}` is text-only** and cannot analyse images. "
+                "Switch to a vision model (e.g. `openai/gpt-4o`, `google/gemini-flash-1.5`) "
+                "in your `.env` / Streamlit Secrets to use this feature.",
+            )
+
         if st.button("❌ Remove Image", use_container_width=True):
             st.session_state.pop("image_b64", None)
             st.session_state.pop("image_name", None)
@@ -315,9 +324,14 @@ if user_prompt:
             active_pdf_context = raw_text
         active_pdf_name = st.session_state.pdf_name
 
-    # Prepare image context if an image is currently uploaded
-    active_image_b64 = st.session_state.get("image_b64")
-    active_image_name = st.session_state.get("image_name")
+    # Prepare image context if an image is currently uploaded AND model supports vision
+    active_image_b64 = None
+    active_image_name = None
+    if "image_b64" in st.session_state and st.session_state.image_b64:
+        if is_vision_model(MODEL_ID):
+            active_image_b64 = st.session_state.get("image_b64")
+            active_image_name = st.session_state.get("image_name")
+        # (if model is text-only, the sidebar already shows a warning; we silently skip the image)
 
     # Generate assistant response with the agentic ReAct loop
     with st.chat_message("assistant"):
