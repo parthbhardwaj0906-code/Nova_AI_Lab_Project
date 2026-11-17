@@ -10,6 +10,7 @@ Features:
 6. JSON Fallback: Automatically handles models lacking native function-calling support.
 7. Long-term Memory: Injects user preferences from SQLite into the system prompt.
 8. PDF Document Context: Seamlessly injects uploaded PDF content for Q&A and document analysis.
+9. Image Vision: Sends base64-encoded images to vision-capable models for description and analysis.
 """
 
 import json
@@ -38,11 +39,13 @@ def build_system_prompt(
     speak_enabled: bool = False,
     pdf_context: Optional[str] = None,
     pdf_name: Optional[str] = None,
+    image_b64: Optional[str] = None,
+    image_name: Optional[str] = None,
 ) -> str:
     """
     Prepares the full system prompt by combining Nova's personality with
     persisted user preferences or facts retrieved from SQLite, active PDF context,
-    and voice narration instructions.
+    active image context hint, and voice narration instructions.
     """
     prompt = SYSTEM_PROMPT
 
@@ -74,6 +77,16 @@ def build_system_prompt(
             f"{pdf_context}\n"
             "</DOCUMENT_CONTENT>\n"
             "When answering questions about this document, cite relevant page numbers when available."
+        )
+
+    # If an image is active, add a brief hint (the actual image is sent in the user message content)
+    if image_b64:
+        img_label = image_name or "uploaded image"
+        prompt += (
+            f"\n\nActive Uploaded Image: '{img_label}'\n"
+            "The user has attached an image to this conversation. "
+            "The image is included directly in the user's message. "
+            "Carefully examine it and use it to answer questions, describe what you see, or extract information."
         )
 
     # Voice instruction when audio narration is enabled
@@ -257,6 +270,8 @@ def stream_chat_response(
     speak_enabled: bool = False,
     pdf_context: Optional[str] = None,
     pdf_name: Optional[str] = None,
+    image_b64: Optional[str] = None,
+    image_name: Optional[str] = None,
 ) -> Generator[str, None, None]:
     """
     Main entry point invoked by app.py.
@@ -269,6 +284,8 @@ def stream_chat_response(
         speak_enabled: Whether voice narration is enabled (adapts system prompt).
         pdf_context: Optional extracted text from an uploaded PDF.
         pdf_name: Optional filename of the uploaded PDF.
+        image_b64: Optional base64 data URI of an uploaded image (e.g. 'data:image/jpeg;base64,...').
+        image_name: Optional filename of the uploaded image (used in the system prompt hint).
 
     Yields:
         str: Tokens representing the assistant's final textual answer.
@@ -281,13 +298,32 @@ def stream_chat_response(
             "Get a free key from Groq (https://console.groq.com) or run Ollama locally."
         )
 
-    # 2. Build conversation history with system prompt, memory, and PDF context
+    # 2. Build system prompt with memory, PDF context, and image hint
     sys_prompt = build_system_prompt(
         speak_enabled=speak_enabled,
         pdf_context=pdf_context,
         pdf_name=pdf_name,
+        image_b64=image_b64,
+        image_name=image_name,
     )
-    full_messages = [{"role": "system", "content": sys_prompt}] + messages
+    full_messages = [{"role": "system", "content": sys_prompt}] + list(messages)
+
+    # 3. If an image is active, upgrade the latest user message to a multimodal content block.
+    #    The OpenAI vision format requires the content field to be a list of parts:
+    #    [{"type": "text", "text": "..."}, {"type": "image_url", "image_url": {"url": "data:..."}}]
+    if image_b64 and full_messages:
+        # Find the last user message in the conversation and add the image to it
+        for i in range(len(full_messages) - 1, -1, -1):
+            if full_messages[i]["role"] == "user":
+                user_text = full_messages[i].get("content", "")
+                full_messages[i] = {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": user_text},
+                        {"type": "image_url", "image_url": {"url": image_b64}},
+                    ],
+                }
+                break
 
     client = get_client()
 
