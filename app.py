@@ -1,45 +1,58 @@
 """
-app.py - Streamlit User Interface for Nova
+app.py - Nova Health Streamlit User Interface
 
-Entry point for the Nova Virtual Assistant.
-Renders the chat interface, manages conversation history,
-supports spoken replies (Edge-TTS) via a sidebar toggle,
-displays real-time "Used tool: X" badges, streams final answers,
-and provides a sidebar to view and delete long-term memories, notes, and reminders.
+Main entry point for Nova Health.
+Features:
+1. Permanent clinical medical disclaimer.
+2. Pre-LLM deterministic emergency & self-harm safety triage (safety.py).
+3. Evidence-informed agentic ReAct health tools (health_tools.py).
+4. Multi-user session profile isolation (user_id partitioning).
+5. Interactive sidebar dashboard:
+   - Metric trend line charts (st.line_chart)
+   - Medication schedule with deletion
+   - Symptom timeline formatted for physician visits
+   - Health profile memory management
+6. Voice narration (Edge-TTS) with hidden background audio player.
 """
 
 import base64
+import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
-from config import MODEL_ID, TTS_VOICE, validate_config
+
+from config import MODEL_ID, TTS_VOICE, MEDICAL_DISCLAIMER, validate_config
 from database import (
     init_db,
     load_messages,
     save_message,
     clear_chat_history,
+    get_health_metrics,
+    delete_health_metric,
+    get_symptoms,
+    delete_symptom,
+    get_medication_reminders,
+    delete_medication_reminder,
     get_preferences,
     delete_preference,
-    get_notes,
-    delete_note,
-    get_reminders,
-    delete_reminder,
 )
+from safety import check_safety
 from llm import stream_chat_response
 from voice import speak
 
+# ==============================================================================
 # 1. Page Configuration
+# ==============================================================================
 st.set_page_config(
-    page_title="Nova - Virtual Assistant",
-    page_icon="✨",
-    layout="centered",
+    page_title="Nova Health - Wellness & Lifestyle Assistant",
+    page_icon="🌱",
+    layout="wide",
 )
 
 
 def play_hidden_audio(mp3_bytes: bytes) -> None:
     """
     Plays MP3 audio silently in the background with zero visible UI footprint.
-    Encodes the raw audio bytes into a Base64 data URI and renders an HTML5
-    <audio autoplay> element inside an invisible iframe (height=0).
+    Encodes raw audio into a Base64 data URI inside an invisible iframe (height=0).
     """
     b64 = base64.b64encode(mp3_bytes).decode()
     components.html(
@@ -52,146 +65,215 @@ def play_hidden_audio(mp3_bytes: bytes) -> None:
     )
 
 
+# ==============================================================================
 # 2. Database Initialization
-# Ensures tables (messages, notes, reminders, user_preferences) exist
+# ==============================================================================
 init_db()
 
-# 4. Sidebar Controls & Storage Viewers
+# ==============================================================================
+# 3. Sidebar Controls & Health Dashboard
+# ==============================================================================
 with st.sidebar:
-    st.title("✨ Nova Assistant")
-    st.caption("A lightweight AI virtual assistant for your university lab.")
+    st.title("🌱 Nova Health")
+    st.caption("Evidence-informed wellness assistant & lifestyle tracker.")
     st.markdown(f"**Chat Model:** `{MODEL_ID}`")
 
-    # Voice Narration Toggle (default: Off)
-    speak_replies = st.toggle("🔊 Speak replies", value=False, help="Read assistant answers aloud using Edge TTS")
+    # User Profile / Multi-Tenant Isolation
+    user_id = st.text_input(
+        "👤 Active Profile / Username",
+        value="default_user",
+        help="Health logs, symptoms, and reminders are partitioned by this username.",
+    ).strip().lower() or "default_user"
+
+    st.caption("🔒 *Privacy Note: Do not enter real personal health data in this shared demo.*")
+
+    # Voice Narration Toggle
+    speak_replies = st.toggle("🔊 Speak replies", value=False, help="Read answers aloud using Edge TTS")
     if speak_replies:
         st.caption(f"Voice: `{TTS_VOICE}`")
 
     # Clear chat button
-    if st.button("🗑️ Clear Chat History", use_container_width=True):
-        clear_chat_history()
+    if st.button("🗑️ Clear Conversation", use_container_width=True):
+        clear_chat_history(user_id)
         st.session_state.messages = []
         st.rerun()
 
     st.markdown("---")
+    st.subheader("📊 Health Dashboard")
 
-    # Expandable viewer for saved user preferences (Long-Term Memory)
-    with st.expander("🧠 User Memory", expanded=False):
-        prefs = get_preferences()
-        if not prefs:
-            st.caption("No preferences saved yet. Tell Nova e.g. 'My name is Parth'.")
-        else:
-            for key, val in prefs.items():
-                col_text, col_del = st.columns([4, 1])
-                with col_text:
-                    st.markdown(f"**{key}:** {val}")
-                with col_del:
-                    if st.button("❌", key=f"del_pref_{key}", help="Delete preference"):
-                        delete_preference(key)
+    # --- Dashboard Section A: Health Metrics & Line Chart ---
+    with st.expander("📈 Metrics & Trends", expanded=False):
+        metrics_list = ["weight", "sleep_hours", "water_ml", "blood_sugar", "mood"]
+        selected_metric = st.selectbox("Inspect Metric:", metrics_list)
+
+        raw_metrics = get_health_metrics(user_id, metric=selected_metric, limit=15)
+        if raw_metrics:
+            # Build DataFrame for line chart (sorted chronologically)
+            chart_df = pd.DataFrame(raw_metrics)[::-1]
+            st.caption(f"Trend for **{selected_metric}**:")
+            st.line_chart(chart_df.set_index("created_at")["value"], height=160)
+
+            # Table of recent entries with delete buttons
+            st.caption("Recent Entries:")
+            for m in raw_metrics[:5]:
+                col_info, col_btn = st.columns([4, 1])
+                with col_info:
+                    st.text(f"{m['created_at'][:10]}: {m['value']} {m['unit']}")
+                with col_btn:
+                    if st.button("❌", key=f"del_met_{m['id']}", help="Delete entry"):
+                        delete_health_metric(m["id"])
                         st.rerun()
-
-    # Expandable viewer for saved notes
-    with st.expander("📝 Saved Notes", expanded=False):
-        notes = get_notes()
-        if not notes:
-            st.caption("No notes saved yet. Tell Nova e.g. 'Note: submit assignment'.")
         else:
-            for note in notes:
-                col_text, col_del = st.columns([4, 1])
-                with col_text:
-                    title_str = note["title"] or "Quick Note"
-                    st.markdown(f"**{title_str}**\n{note['content']}")
-                with col_del:
-                    if st.button("❌", key=f"del_note_{note['id']}", help="Delete note"):
-                        delete_note(note["id"])
-                        st.rerun()
+            st.caption(f"No entries logged for '{selected_metric}' yet. Ask Nova e.g. 'Log weight 70 kg'.")
 
-    # Expandable viewer for saved reminders
-    with st.expander("⏰ Reminders", expanded=False):
-        reminders = get_reminders()
-        if not reminders:
-            st.caption("No reminders set yet.")
+    # --- Dashboard Section B: Medication Reminders ---
+    with st.expander("💊 Medication Schedule", expanded=False):
+        reminders = get_medication_reminders(user_id)
+        if reminders:
+            for r in reminders:
+                col_info, col_btn = st.columns([4, 1])
+                with col_info:
+                    note = f" *({r['notes']})*" if r["notes"] else ""
+                    st.markdown(f"**{r['name']}** at `{r['time']}`{note}")
+                with col_btn:
+                    if st.button("❌", key=f"del_med_{r['id']}", help="Delete reminder"):
+                        delete_medication_reminder(r["id"])
+                        st.rerun()
         else:
-            for rem in reminders:
-                col_text, col_del = st.columns([4, 1])
-                with col_text:
-                    due = f" *({rem['due_time']})*" if rem["due_time"] else ""
-                    st.markdown(f"• {rem['task']}{due}")
-                with col_del:
-                    if st.button("❌", key=f"del_rem_{rem['id']}", help="Delete reminder"):
-                        delete_reminder(rem["id"])
-                        st.rerun()
+            st.caption("No medication reminders scheduled. Ask Nova e.g. 'Remind me to take Vitamin D at 8 AM'.")
 
-# 4. Configuration Check
+    # --- Dashboard Section C: Symptom Timeline ---
+    with st.expander("🩺 Symptom Log", expanded=False):
+        symptoms = get_symptoms(user_id, limit=10)
+        if symptoms:
+            for s in symptoms:
+                col_info, col_btn = st.columns([4, 1])
+                sev = s["severity"]
+                # Color-code severity tags
+                badge = "🟢" if sev <= 3 else ("🟡" if sev <= 7 else "🔴")
+                with col_info:
+                    notes = f"\n*{s['notes']}*" if s["notes"] else ""
+                    st.markdown(f"{badge} **{s['symptom']}** (Sev: {sev}/10) — `{s['created_at'][:10]}`{notes}")
+                with col_btn:
+                    if st.button("❌", key=f"del_symp_{s['id']}", help="Delete symptom"):
+                        delete_symptom(s["id"])
+                        st.rerun()
+        else:
+            st.caption("No symptoms recorded yet. Ask Nova e.g. 'Log mild knee pain severity 3'.")
+
+    # --- Dashboard Section D: Health Profile & Memory ---
+    with st.expander("🧠 Health Profile & Goals", expanded=False):
+        prefs = get_preferences(user_id)
+        if prefs:
+            for k, v in prefs.items():
+                col_info, col_btn = st.columns([4, 1])
+                with col_info:
+                    st.markdown(f"**{k}:** {v}")
+                with col_btn:
+                    if st.button("❌", key=f"del_pref_{k}", help="Delete preference"):
+                        delete_preference(user_id, k)
+                        st.rerun()
+        else:
+            st.caption("No profile preferences saved yet. Tell Nova e.g. 'I am vegetarian' or 'My goal is better sleep'.")
+
+# ==============================================================================
+# 4. Main Application Window & Disclaimer Banner
+# ==============================================================================
+st.title("🌱 Nova Health Virtual Assistant")
+st.caption("Your companion for lifestyle tracking, nutrition exploration, and evidence-informed wellness habits.")
+
+# Permanent Clinical Disclaimer Banner
+st.info(f"⚕️ **Medical Disclaimer**: {MEDICAL_DISCLAIMER}")
+
+# Configuration warning check
 is_valid_config, config_error_msg = validate_config()
 if not is_valid_config:
     st.warning(f"⚠️ **Setup Needed:** {config_error_msg}")
 
-# 5. Initialize Streamlit Session State
-if "messages" not in st.session_state:
-    st.session_state.messages = load_messages()
+# Initialize user message history from SQLite
+if "messages" not in st.session_state or st.session_state.get("active_user") != user_id:
+    st.session_state.active_user = user_id
+    st.session_state.messages = load_messages(user_id)
 
-# 6. Render Saved Chat History
+# Render previous chat history
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
 
-# 7. User Input
-user_prompt = st.chat_input("Ask Nova something...")
+# ==============================================================================
+# 5. User Input & Execution Pipeline
+# ==============================================================================
+user_prompt = st.chat_input("Ask Nova Health about nutrition, metrics, BMI, or lifestyle habits...")
 
-# 8. Unified Chat & Execution Flow
 if user_prompt:
-    # Display the user's message immediately in the UI
+    # 1. Immediately render user message
     with st.chat_message("user"):
         st.markdown(user_prompt)
 
-    # Persist user message to SQLite and session state
-    save_message("user", user_prompt)
+    save_message(user_id, "user", user_prompt)
     st.session_state.messages.append({"role": "user", "content": user_prompt})
 
-    # Generate assistant response with the agentic ReAct loop
-    with st.chat_message("assistant"):
-        # Placeholder to dynamically display "Used tool: X" indicator
-        tool_status_placeholder = st.empty()
-        used_tools = []
+    # 2. Pre-LLM Deterministic Safety Screening (Emergency & Crisis Interception)
+    is_safe, safety_alert = check_safety(user_prompt)
 
-        def on_tool_executed(tool_name: str) -> None:
-            """Callback fired whenever Nova invokes a tool in the ReAct loop."""
-            used_tools.append(tool_name)
-            tool_status_placeholder.caption(f"🛠️ *Used tool:* `{tool_name}`")
+    if not is_safe:
+        # Bypasses the LLM completely: returns deterministic emergency/crisis advice
+        with st.chat_message("assistant"):
+            st.error(safety_alert)
 
-        try:
-            # Stream ONLY the final text response token-by-token
-            full_response = st.write_stream(
-                stream_chat_response(
-                    st.session_state.messages,
-                    on_tool_call=on_tool_executed,
-                    speak_enabled=speak_replies,
+        save_message(user_id, "assistant", safety_alert)
+        st.session_state.messages.append({"role": "assistant", "content": safety_alert})
+
+        # Voice Narration for safety alert if enabled
+        if speak_replies:
+            audio_bytes = speak(safety_alert)
+            if audio_bytes:
+                play_hidden_audio(audio_bytes)
+
+    else:
+        # 3. Safe to proceed with ReAct Agentic Execution Loop
+        with st.chat_message("assistant"):
+            tool_status_placeholder = st.empty()
+            used_tools = []
+
+            def on_tool_executed(tool_name: str) -> None:
+                """Callback invoked whenever Nova Health executes an agentic health tool."""
+                used_tools.append(tool_name)
+                tool_status_placeholder.caption(f"🛠️ *Used tool:* `{tool_name}`")
+
+            try:
+                # Stream ONLY the final validated answer token-by-token
+                full_response = st.write_stream(
+                    stream_chat_response(
+                        st.session_state.messages,
+                        on_tool_call=on_tool_executed,
+                        speak_enabled=speak_replies,
+                        user_id=user_id,
+                    )
                 )
-            )
 
-            # Keep the final tool usage status badge visible above or beside the answer
-            if used_tools:
-                tools_str = ", ".join(f"`{t}`" for t in used_tools)
-                tool_status_placeholder.caption(f"🛠️ *Used tool:* {tools_str}")
+                # Persist tool usage badge above assistant response
+                if used_tools:
+                    tools_str = ", ".join(f"`{t}`" for t in used_tools)
+                    tool_status_placeholder.caption(f"🛠️ *Used tool(s):* {tools_str}")
 
-            # Save the final assistant answer to database and session state
-            if full_response:
-                save_message("assistant", full_response)
-                st.session_state.messages.append({"role": "assistant", "content": full_response})
+                # Save assistant response to SQLite and local state
+                if full_response:
+                    save_message(user_id, "assistant", full_response)
+                    st.session_state.messages.append({"role": "assistant", "content": full_response})
 
-            # Voice Narration: If toggle is enabled, speak the answer
-            if speak_replies and full_response:
-                try:
-                    audio_bytes = speak(full_response)
-                    if audio_bytes:
-                        play_hidden_audio(audio_bytes)
-                    else:
-                        st.warning("⚠️ Could not generate voice narration.")
-                except Exception:
-                    st.warning("⚠️ Voice narration unavailable.")
+                # Voice Narration: Speak final answer if toggle is enabled
+                if speak_replies and full_response:
+                    try:
+                        audio_bytes = speak(full_response)
+                        if audio_bytes:
+                            play_hidden_audio(audio_bytes)
+                        else:
+                            st.warning("⚠️ Could not generate voice narration.")
+                    except Exception:
+                        st.warning("⚠️ Voice narration unavailable.")
 
-        except RuntimeError as err:
-            st.error(f"⚠️ {err}")
-        except Exception as exc:
-            st.error(f"⚠️ An unexpected error occurred: {str(exc)}")
+            except RuntimeError as err:
+                st.error(f"⚠️ {err}")
+            except Exception as exc:
+                st.error(f"⚠️ An unexpected error occurred: {str(exc)}")

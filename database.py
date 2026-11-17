@@ -1,24 +1,25 @@
 """
-database.py - SQLite Database Management
+database.py - SQLite Database Management for Nova Health
 
-Provides persistent storage for:
-1. Chat History: Keeps conversation turns across app restarts.
-2. User Notes: Personal memos saved by Nova.
-3. Reminders: Tasks with optional due times.
-4. User Preferences: Long-term memory profile (e.g. name, tone, major).
+Provides persistent, user-isolated storage for:
+1. Chat History: Conversation turns per user profile.
+2. Health Metrics: Numeric biometric logs (weight, sleep, water, blood pressure, etc.).
+3. Symptoms: Symptom logs with severity ratings (1-10) and notes for doctor sharing.
+4. Medication Reminders: Medication schedules and user notes.
+5. User Preferences: Personal health profile, goals, age, and sex.
 
-Automatically creates nova.db on first run if it does not already exist.
+Automatically creates and migrates nova.db on first run.
 """
 
 import sqlite3
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from config import DB_PATH
 
 
 def get_connection() -> sqlite3.Connection:
     """
     Creates and returns a connection to the SQLite database.
-    Enables row factory so query results can be accessed like dictionaries.
+    Row factory is enabled so columns can be accessed as dictionary keys.
     """
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -27,17 +28,18 @@ def get_connection() -> sqlite3.Connection:
 
 def init_db() -> None:
     """
-    Initializes the database schema by creating required tables if they do not exist.
-    Called automatically on application startup.
+    Initializes the database schema by creating required health and chat tables.
+    Runs safe schema migrations for existing tables.
     """
     with get_connection() as conn:
         cursor = conn.cursor()
 
-        # 1. Chat message history
+        # 1. Chat messages table (isolated by user_id)
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL DEFAULT 'default_user',
                 role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
                 content TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -45,175 +47,275 @@ def init_db() -> None:
             """
         )
 
-        # 2. Personal notes
+        # 2. Health biometric metrics table
         cursor.execute(
             """
-            CREATE TABLE IF NOT EXISTS notes (
+            CREATE TABLE IF NOT EXISTS health_metrics (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT,
-                content TEXT NOT NULL,
+                user_id TEXT NOT NULL DEFAULT 'default_user',
+                metric TEXT NOT NULL,
+                value REAL NOT NULL,
+                unit TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
 
-        # 3. Tasks and reminders
+        # 3. Clinical symptom logs table
         cursor.execute(
             """
-            CREATE TABLE IF NOT EXISTS reminders (
+            CREATE TABLE IF NOT EXISTS symptoms (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                task TEXT NOT NULL,
-                due_time TEXT,
+                user_id TEXT NOT NULL DEFAULT 'default_user',
+                symptom TEXT NOT NULL,
+                severity INTEGER NOT NULL CHECK(severity BETWEEN 1 AND 10),
+                notes TEXT DEFAULT '',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
 
-        # 4. Long-term user preferences & traits
+        # 4. Medication reminders table
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS medication_reminders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL DEFAULT 'default_user',
+                name TEXT NOT NULL,
+                time TEXT NOT NULL,
+                notes TEXT DEFAULT '',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        # 5. User preferences and profile attributes
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS user_preferences (
-                key TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL DEFAULT 'default_user',
+                key TEXT NOT NULL,
                 value TEXT NOT NULL,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, key)
             )
             """
         )
 
+        # Safe column migrations if database already existed
+        for table in ["messages", "health_metrics", "symptoms", "medication_reminders"]:
+            try:
+                cursor.execute(f"ALTER TABLE {table} ADD COLUMN user_id TEXT NOT NULL DEFAULT 'default_user'")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
         conn.commit()
 
 
 # ==============================================================================
-# Chat History Operations
+# Chat History Operations (Per User)
 # ==============================================================================
-def save_message(role: str, content: str) -> None:
-    """Saves a single message (either from 'user' or 'assistant') to the database."""
+def save_message(user_id: str, role: str, content: str) -> None:
+    """Saves a conversation turn for a specific user profile."""
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO messages (role, content) VALUES (?, ?)",
-            (role, content),
+            "INSERT INTO messages (user_id, role, content) VALUES (?, ?, ?)",
+            (user_id, role, content),
         )
         conn.commit()
 
 
-def load_messages() -> List[Dict[str, str]]:
-    """Retrieves all chat messages in chronological order."""
+def load_messages(user_id: str) -> List[Dict[str, str]]:
+    """Retrieves conversation history in chronological order for a specific user profile."""
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT role, content FROM messages ORDER BY id ASC")
+        cursor.execute(
+            "SELECT role, content FROM messages WHERE user_id = ? ORDER BY id ASC",
+            (user_id,),
+        )
         rows = cursor.fetchall()
         return [{"role": row["role"], "content": row["content"]} for row in rows]
 
 
-def clear_chat_history() -> None:
-    """Deletes all messages from the messages table to reset the conversation."""
+def clear_chat_history(user_id: str) -> None:
+    """Clears conversation history for the specified user profile."""
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM messages")
+        cursor.execute("DELETE FROM messages WHERE user_id = ?", (user_id,))
         conn.commit()
 
 
 # ==============================================================================
-# Notes Operations
+# Health Metrics Operations
 # ==============================================================================
-def save_note(title: str, content: str) -> int:
-    """Saves a note to the database and returns the generated note ID."""
+def save_health_metric(user_id: str, metric: str, value: float, unit: str) -> int:
+    """Saves a numeric physiological metric (e.g., weight, sleep, water)."""
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO notes (title, content) VALUES (?, ?)",
-            (title, content),
+            "INSERT INTO health_metrics (user_id, metric, value, unit) VALUES (?, ?, ?, ?)",
+            (user_id, metric.strip().lower(), float(value), unit.strip()),
         )
         conn.commit()
         return cursor.lastrowid
 
 
-def get_notes() -> List[Dict[str, Any]]:
-    """Retrieves all saved notes in reverse chronological order (newest first)."""
+def get_health_metrics(user_id: str, metric: Optional[str] = None, limit: int = 30) -> List[Dict[str, Any]]:
+    """Retrieves logged health metrics for a user, optionally filtered by metric type."""
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT id, title, content, created_at FROM notes ORDER BY id DESC")
+        if metric:
+            cursor.execute(
+                """
+                SELECT id, metric, value, unit, created_at
+                FROM health_metrics
+                WHERE user_id = ? AND metric = ?
+                ORDER BY id DESC LIMIT ?
+                """,
+                (user_id, metric.strip().lower(), limit),
+            )
+        else:
+            cursor.execute(
+                """
+                SELECT id, metric, value, unit, created_at
+                FROM health_metrics
+                WHERE user_id = ?
+                ORDER BY id DESC LIMIT ?
+                """,
+                (user_id, limit),
+            )
         rows = cursor.fetchall()
         return [dict(row) for row in rows]
 
 
-def delete_note(note_id: int) -> None:
-    """Deletes a note by its ID."""
+def delete_health_metric(metric_id: int) -> None:
+    """Deletes a health metric record by ID."""
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM notes WHERE id = ?", (note_id,))
+        cursor.execute("DELETE FROM health_metrics WHERE id = ?", (metric_id,))
         conn.commit()
 
 
 # ==============================================================================
-# Reminders Operations
+# Symptoms Operations
 # ==============================================================================
-def save_reminder(task: str, due_time: str) -> int:
-    """Saves a reminder task and returns the generated reminder ID."""
+def save_symptom(user_id: str, symptom: str, severity: int, notes: str = "") -> int:
+    """Saves a reported symptom with a 1-10 severity score and descriptive notes."""
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "INSERT INTO reminders (task, due_time) VALUES (?, ?)",
-            (task, due_time),
+            "INSERT INTO symptoms (user_id, symptom, severity, notes) VALUES (?, ?, ?, ?)",
+            (user_id, symptom.strip(), int(severity), notes.strip()),
         )
         conn.commit()
         return cursor.lastrowid
 
 
-def get_reminders() -> List[Dict[str, Any]]:
-    """Retrieves all reminders in reverse chronological order."""
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, task, due_time, created_at FROM reminders ORDER BY id DESC")
-        rows = cursor.fetchall()
-        return [dict(row) for row in rows]
-
-
-def delete_reminder(reminder_id: int) -> None:
-    """Deletes a reminder by its ID."""
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
-        conn.commit()
-
-
-# ==============================================================================
-# User Preferences (Long-term Memory) Operations
-# ==============================================================================
-def set_preference(key: str, value: str) -> None:
-    """
-    Saves or updates a user preference key-value pair.
-    Uses UPSERT (INSERT ... ON CONFLICT DO UPDATE) so existing keys are modified.
-    """
+def get_symptoms(user_id: str, limit: int = 30) -> List[Dict[str, Any]]:
+    """Retrieves logged symptoms for a user in reverse chronological order."""
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
             """
-            INSERT INTO user_preferences (key, value) VALUES (?, ?)
-            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+            SELECT id, symptom, severity, notes, created_at
+            FROM symptoms
+            WHERE user_id = ?
+            ORDER BY id DESC LIMIT ?
             """,
-            (key.strip().lower(), value.strip()),
+            (user_id, limit),
+        )
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+def delete_symptom(symptom_id: int) -> None:
+    """Deletes a symptom log entry by ID."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM symptoms WHERE id = ?", (symptom_id,))
+        conn.commit()
+
+
+# ==============================================================================
+# Medication Reminders Operations
+# ==============================================================================
+def save_medication_reminder(user_id: str, name: str, time: str, notes: str = "") -> int:
+    """Stores a user-provided medication schedule time (never suggests dosages)."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO medication_reminders (user_id, name, time, notes) VALUES (?, ?, ?, ?)",
+            (user_id, name.strip(), time.strip(), notes.strip()),
+        )
+        conn.commit()
+        return cursor.lastrowid
+
+
+def get_medication_reminders(user_id: str) -> List[Dict[str, Any]]:
+    """Retrieves all active medication reminders for the user profile."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT id, name, time, notes, created_at
+            FROM medication_reminders
+            WHERE user_id = ?
+            ORDER BY id DESC
+            """,
+            (user_id,),
+        )
+        rows = cursor.fetchall()
+        return [dict(row) for row in rows]
+
+
+def delete_medication_reminder(reminder_id: int) -> None:
+    """Deletes a medication reminder by ID."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM medication_reminders WHERE id = ?", (reminder_id,))
+        conn.commit()
+
+
+# ==============================================================================
+# User Health Preferences (Long-term Profile Memory)
+# ==============================================================================
+def set_preference(user_id: str, key: str, value: str) -> None:
+    """Saves or updates a user health profile attribute (e.g., age, sex, fitness goals)."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO user_preferences (user_id, key, value) VALUES (?, ?, ?)
+            ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+            """,
+            (user_id, key.strip().lower(), value.strip()),
         )
         conn.commit()
 
 
-def get_preferences() -> Dict[str, str]:
-    """Retrieves all user preferences as a key-value dictionary."""
+def get_preferences(user_id: str) -> Dict[str, str]:
+    """Retrieves all profile preferences for a given user as a dictionary."""
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT key, value FROM user_preferences ORDER BY key ASC")
+        cursor.execute(
+            "SELECT key, value FROM user_preferences WHERE user_id = ? ORDER BY key ASC",
+            (user_id,),
+        )
         rows = cursor.fetchall()
         return {row["key"]: row["value"] for row in rows}
 
 
-def delete_preference(key: str) -> None:
+def delete_preference(user_id: str, key: str) -> None:
     """Deletes a specific user preference by key."""
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM user_preferences WHERE key = ?", (key.strip().lower(),))
+        cursor.execute(
+            "DELETE FROM user_preferences WHERE user_id = ? AND key = ?",
+            (user_id, key.strip().lower()),
+        )
         conn.commit()
 
 
-# Automatically initialize tables when this module is imported
+# Automatically initialize schema on module load
 init_db()

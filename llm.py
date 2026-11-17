@@ -1,14 +1,13 @@
 """
-llm.py - Universal LLM Interface with Tool Calling (ReAct Loop)
+llm.py - Universal LLM Interface for Nova Health (ReAct Loop)
 
 Features:
 1. Strategy Pattern: Connects to any OpenAI-compatible provider (Groq, Ollama, OpenRouter).
-2. Native Tool Calling: Sends tool schemas, runs requested functions, feeds results back (max 5 rounds).
-3. Final Answer Streaming: Streams ONLY the assistant's final response tokens.
-4. Tool Execution Callback: Fires an `on_tool_call` callback so app.py can display a UI badge.
-5. Voice Mode Adaptation: Instructs model to keep responses brief when speech mode is active.
+2. Clinical Safety Guardrails: Enforces evidence-informed wellness boundaries.
+3. Native Tool Calling: Orchestrates health_tools (BMI, calories, metrics, nutrition, symptoms).
+4. Final Answer Streaming: Streams ONLY the assistant's final response tokens.
+5. User Profile Partitioning: Passes user_id for multi-tenant database isolation.
 6. JSON Fallback: Automatically handles models lacking native function-calling support.
-7. Long-term Memory: Injects user preferences from SQLite into the system prompt.
 """
 
 import json
@@ -18,7 +17,7 @@ import openai
 
 from config import LLM_BASE_URL, LLM_API_KEY, MODEL_ID, SYSTEM_PROMPT
 from database import get_preferences
-import tools
+import health_tools
 
 # Limit iterative tool-calling steps to prevent infinite execution loops
 MAX_TOOL_ROUNDS = 5
@@ -33,34 +32,33 @@ def get_client() -> OpenAI:
     return OpenAI(base_url=LLM_BASE_URL, api_key=api_key)
 
 
-def build_system_prompt(speak_enabled: bool = False) -> str:
+def build_system_prompt(user_id: str = "default_user", speak_enabled: bool = False) -> str:
     """
-    Prepares the full system prompt by combining Nova's personality with
-    persisted user preferences or facts retrieved from SQLite.
-    When speak_enabled is True, adds guidance for concise, conversational answers.
+    Prepares the full system prompt by combining Nova Health's clinical boundaries
+    with user-specific health profile preferences retrieved from SQLite.
     """
     prompt = SYSTEM_PROMPT
 
     try:
-        prefs = get_preferences()
+        prefs = get_preferences(user_id)
         if prefs:
             pref_lines = [f"- {k}: {v}" for k, v in prefs.items()]
             prompt += (
-                "\n\nUser Profile & Saved Long-Term Memory:\n"
+                f"\n\nActive User Profile ({user_id}) & Health Preferences:\n"
                 + "\n".join(pref_lines)
-                + "\nAlways personalize answers based on these saved preferences."
+                + "\nPersonalize lifestyle guidance based on these saved preferences when helpful."
             )
         prompt += (
-            "\n\nMemory Instructions: When the user tells you their name, preferences, "
-            "or background (e.g., 'My name is X', 'I prefer short answers'), call the "
-            "`remember_preference` tool to permanently save it."
+            "\n\nTool Use Guidance: When the user shares health metrics (weight, water, sleep), "
+            "asks for nutrition lookups, or reports symptoms, use the appropriate health tools to log "
+            "or calculate data. Always remind users that you provide wellness support, not medical diagnoses."
         )
     except Exception:
         pass
 
     # Voice instruction when audio narration is enabled
     if speak_enabled:
-        prompt += "\n\nVoice Narration Active: Keep answers brief and conversational, since they will be spoken aloud."
+        prompt += "\n\nVoice Narration Active: Keep answers brief, conversational, and easy to follow when spoken aloud."
 
     return prompt
 
@@ -68,22 +66,22 @@ def build_system_prompt(speak_enabled: bool = False) -> str:
 def _stream_native_tools(
     client: OpenAI,
     messages: List[Dict[str, Any]],
+    user_id: str = "default_user",
     on_tool_call: Optional[Callable[[str], None]] = None,
 ) -> Generator[str, None, None]:
     """
     Executes the agentic tool-use loop using OpenAI's native tool calling protocol.
     Repeats up to MAX_TOOL_ROUNDS:
-      - If tool calls are requested: executes them, calls on_tool_call, and feeds observations back.
+      - If tool calls are requested: executes health tools, calls on_tool_call, and feeds observations back.
       - If no tool calls are requested: streams final answer tokens to the generator.
     """
     current_messages = list(messages)
 
     for round_idx in range(MAX_TOOL_ROUNDS):
-        # Request completion with tools enabled
         response_stream = client.chat.completions.create(
             model=MODEL_ID,
             messages=current_messages,
-            tools=tools.TOOLS_SCHEMA,
+            tools=health_tools.HEALTH_TOOLS_SCHEMA,
             tool_choice="auto",
             stream=True,
             temperature=0.7,
@@ -140,8 +138,8 @@ def _stream_native_tools(
             if on_tool_call:
                 on_tool_call(tool_name)
 
-            # Execute the tool safely via tools.py
-            observation = tools.execute_tool(tool_name, parsed_args)
+            # Execute the health tool safely via health_tools.py
+            observation = health_tools.execute_health_tool(tool_name, parsed_args, user_id=user_id)
 
             assistant_tool_calls.append({
                 "id": tool_id,
@@ -170,21 +168,26 @@ def _stream_native_tools(
 def _stream_json_fallback(
     client: OpenAI,
     messages: List[Dict[str, Any]],
+    user_id: str = "default_user",
     on_tool_call: Optional[Callable[[str], None]] = None,
 ) -> Generator[str, None, None]:
     """
     Fallback mechanism for models that do not natively support tool calling.
-    Instructs the model to output a structured JSON object when it wants to call a tool.
+    Instructs the model to output a structured JSON object when it wants to call a health tool.
     Streams only the final textual answer.
     """
     tools_prompt = (
-        "\n\nYou have access to the following tools:\n"
-        "1. get_weather(city: str) - Get current weather for any city.\n"
-        "2. calculator(expression: str) - Safely calculate math or percentage expressions.\n"
-        "3. add_note(title: str, content: str) - Save a note to SQLite.\n"
-        "4. list_notes() - View all saved user notes.\n"
-        "5. add_reminder(task: str, due_time: str) - Save a task or reminder.\n"
-        "6. remember_preference(key: str, value: str) - Save user profile preferences.\n\n"
+        "\n\nYou have access to the following health tools:\n"
+        "1. calculate_bmi(weight_kg, height_cm) - BMI & WHO category.\n"
+        "2. estimate_daily_calories(age, sex, weight_kg, height_cm, activity_level, goal) - Mifflin-St Jeor with safe floors.\n"
+        "3. log_health_metric(metric, value, unit) - Log biometric data (weight, sleep, water, blood_sugar, blood_pressure, mood).\n"
+        "4. get_health_history(metric, days) - View recent entries and trend.\n"
+        "5. add_medication_reminder(name, time, notes) - Save medication schedule.\n"
+        "6. list_medication_reminders() - View active medication reminders.\n"
+        "7. log_symptom(symptom, severity_1_to_10, notes) - Record symptom with severity.\n"
+        "8. get_symptom_history(days) - View symptom timeline for doctor visit.\n"
+        "9. lookup_nutrition(food) - Query Open Food Facts for calories and macros.\n"
+        "10. remember_health_preference(key, value) - Save health profile traits.\n\n"
         "If you need to call a tool, reply ONLY with a valid JSON object in this format:\n"
         "{\"tool\": \"tool_name\", \"arguments\": {\"param\": \"value\"}}\n"
         "Do not include any conversational filler when calling a tool.\n"
@@ -192,7 +195,6 @@ def _stream_json_fallback(
     )
 
     current_messages = list(messages)
-    # Inject tool-calling instructions into system prompt
     if current_messages and current_messages[0]["role"] == "system":
         current_messages[0] = {
             "role": "system",
@@ -209,7 +211,6 @@ def _stream_json_fallback(
 
         reply_text = (response.choices[0].message.content or "").strip()
 
-        # Check if the model decided to call a tool via JSON
         is_tool_call = False
         parsed_call = None
 
@@ -229,16 +230,14 @@ def _stream_json_fallback(
             if on_tool_call:
                 on_tool_call(tool_name)
 
-            observation = tools.execute_tool(tool_name, tool_args)
+            observation = health_tools.execute_health_tool(tool_name, tool_args, user_id=user_id)
 
-            # Feed the observation back to the model for the next turn
             current_messages.append({"role": "assistant", "content": reply_text})
             current_messages.append({
                 "role": "user",
                 "content": f"Observation for tool '{tool_name}': {observation}",
             })
         else:
-            # Model generated the final plain-text answer: stream it token-by-token
             for token in reply_text:
                 yield token
             break
@@ -248,21 +247,22 @@ def stream_chat_response(
     messages: List[Dict[str, str]],
     on_tool_call: Optional[Callable[[str], None]] = None,
     speak_enabled: bool = False,
+    user_id: str = "default_user",
 ) -> Generator[str, None, None]:
     """
     Main entry point invoked by app.py.
-    Orchestrates communication with the LLM, managing tool calling rounds
+    Orchestrates communication with the LLM, managing health tool calling rounds
     and streaming only the final answer.
 
     Args:
         messages: List of chat messages with 'role' and 'content'.
         on_tool_call: Optional callback invoked with the tool name whenever a tool runs.
         speak_enabled: Whether voice narration is enabled (adapts system prompt).
+        user_id: The active user profile identifier for isolated data access.
 
     Yields:
         str: Tokens representing the assistant's final textual answer.
     """
-    # 1. Validation check
     is_local = "localhost" in LLM_BASE_URL or "127.0.0.1" in LLM_BASE_URL
     if not is_local and (not LLM_API_KEY or "your_" in LLM_API_KEY):
         raise RuntimeError(
@@ -270,24 +270,24 @@ def stream_chat_response(
             "Get a free key from Groq (https://console.groq.com) or run Ollama locally."
         )
 
-    # 2. Build conversation history with system prompt & memory
+    # Build conversation history with system prompt & memory
     full_messages = [
-        {"role": "system", "content": build_system_prompt(speak_enabled=speak_enabled)}
+        {"role": "system", "content": build_system_prompt(user_id=user_id, speak_enabled=speak_enabled)}
     ] + messages
 
     client = get_client()
 
     try:
-        # First attempt native OpenAI function calling
-        yield from _stream_native_tools(client, full_messages, on_tool_call=on_tool_call)
+        yield from _stream_native_tools(
+            client, full_messages, user_id=user_id, on_tool_call=on_tool_call
+        )
 
     except openai.BadRequestError as bad_req:
         err_msg = str(bad_req).lower()
-        # Fall back to JSON mode if provider complains that tools are unsupported
         if "tool" in err_msg or "support" in err_msg or "parameter" in err_msg:
             try:
                 yield from _stream_json_fallback(
-                    client, full_messages, on_tool_call=on_tool_call
+                    client, full_messages, user_id=user_id, on_tool_call=on_tool_call
                 )
                 return
             except Exception as fb_err:
@@ -296,8 +296,7 @@ def stream_chat_response(
 
     except openai.AuthenticationError as auth_err:
         raise RuntimeError(
-            "Invalid API Key (401 Unauthorized). "
-            "Please check `LLM_API_KEY` in your `.env` file."
+            "Invalid API Key (401 Unauthorized). Please check `LLM_API_KEY` in your `.env` file."
         ) from auth_err
 
     except (openai.PermissionDeniedError, openai.RateLimitError) as rate_err:
@@ -307,14 +306,12 @@ def stream_chat_response(
 
     except openai.NotFoundError as not_found:
         raise RuntimeError(
-            f"Model or endpoint not found (404) at {LLM_BASE_URL}. "
-            f"Verify `MODEL_ID` ('{MODEL_ID}') in `.env`."
+            f"Model or endpoint not found (404) at {LLM_BASE_URL}. Verify `MODEL_ID` in `.env`."
         ) from not_found
 
     except openai.APIConnectionError as conn_err:
         raise RuntimeError(
-            f"Could not connect to {LLM_BASE_URL}. "
-            "If using local Ollama, ensure the Ollama server is running."
+            f"Could not connect to {LLM_BASE_URL}. If using local Ollama, ensure it is running."
         ) from conn_err
 
     except openai.APIStatusError as status_err:
