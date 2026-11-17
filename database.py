@@ -13,7 +13,7 @@ Automatically creates and migrates nova.db on first run.
 
 import sqlite3
 from typing import List, Dict, Any, Optional
-from config import DB_PATH
+from app_config import DB_PATH
 
 
 def get_connection() -> sqlite3.Connection:

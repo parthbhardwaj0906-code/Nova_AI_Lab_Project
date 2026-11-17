@@ -11,7 +11,7 @@ import concurrent.futures
 import re
 from typing import Optional
 import edge_tts
-from config import TTS_VOICE
+from app_config import TTS_VOICE
 
 # Maximum characters to speak before truncating and asking the user to read the screen
 MAX_SPEECH_LENGTH = 600

@@ -15,12 +15,21 @@ Features:
 6. Voice narration (Edge-TTS) with hidden background audio player.
 """
 
+import os
+import sys
+from pathlib import Path
+
+# Ensure the application directory is always first in sys.path to resolve local modules
+APP_DIR = Path(__file__).resolve().parent
+if str(APP_DIR) not in sys.path:
+    sys.path.insert(0, str(APP_DIR))
+
 import base64
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
-from config import MODEL_ID, TTS_VOICE, MEDICAL_DISCLAIMER, validate_config
+from app_config import MODEL_ID, TTS_VOICE, MEDICAL_DISCLAIMER, validate_config
 from database import (
     init_db,
     load_messages,

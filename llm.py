@@ -15,7 +15,7 @@ from typing import Generator, List, Dict, Any, Callable, Optional
 from openai import OpenAI
 import openai
 
-from config import LLM_BASE_URL, LLM_API_KEY, MODEL_ID, SYSTEM_PROMPT
+from app_config import LLM_BASE_URL, LLM_API_KEY, MODEL_ID, SYSTEM_PROMPT
 from database import get_preferences
 import health_tools
 

@@ -9,7 +9,7 @@ eating patterns, returning hardcoded, clinically safe responses.
 
 import re
 from typing import Tuple
-from config import EMERGENCY_NUMBER
+from app_config import EMERGENCY_NUMBER
 
 # ==============================================================================
 # 1. Acute Medical Emergency Patterns
